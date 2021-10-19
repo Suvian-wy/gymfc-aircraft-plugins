@@ -83,7 +83,7 @@ public:
         , turning_direction_(turning_direction::CW)
         , flap_max_rad_(kDefaulteFlapMaxRad)
         , motor_cr_(kDefaultMotorCr)
-        , motor_wb_(kDefaultMotrorWb)
+        , motor_wb_(kDefaultMotorWb)
         , motor_T_(kDefaultMotorT)
         , motor_jm_(kDefaultMotorJm)
         , init_RPM_(kDefaultInitRPM)
@@ -118,6 +118,7 @@ private:
     std::string joint2_name_;
     std::string link1_name_;
     std::string link2_name_;
+    std::string base_link_name_;
     std::string motor_speed_pub_topic_;
     std::string namespace_;
     std::string rotor_velocity_units_;
@@ -165,7 +166,7 @@ private:
     physics::LinkPtr  link1_;
     physics::LinkPtr  link2_;
 
-    bool        use_pid_;
+    bool use_pid_;
 
     /// \brief Pointer to the update event connection.
     event::ConnectionPtr updateConnection_;

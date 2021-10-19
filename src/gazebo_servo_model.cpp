@@ -22,16 +22,16 @@
 #include "EscSensor.pb.h"
 #include <ignition/math.hh>
 
+#define DEG2RAD 0.017453292
+#define SERVO_ACCURACY 0.001526112
+
 namespace gazebo {
 
-GazeboMotorModel::~GazeboMotorModel()
-{
-    updateConnection_->~Connection();
-}
+GazeboServoModel::~GazeboServoModel() { updateConnection_->~Connection(); }
 
-void GazeboMotorModel::InitializeParams() { }
+void GazeboServoModel::InitializeParams() { }
 
-void GazeboMotorModel::Publish()
+void GazeboServoModel::Publish()
 {
     if (rotor_velocity_units_.compare(rotor_velocity_units::RPM) == 0) {
         double rpms = std::abs(joint_->GetVelocity(0) * 9.5493);
@@ -50,14 +50,14 @@ void GazeboMotorModel::Publish()
     sensor.set_temperature(0);
     sensor.set_voltage(0);
 
-    sensor.set_force(current_force_);
-    sensor.set_torque(current_torque_);
+    sensor.set_force(0);
+    sensor.set_torque(0);
 
     esc_sensor_pub_->Publish(sensor);
     // gzdbg << "Sending esc sensor for motor " << motor_number_ << std::endl;
 }
 
-void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf)
+void GazeboServoModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf)
 {
     model_ = _model;
 
@@ -78,7 +78,6 @@ void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf)
     joint_ = model_->GetJoint(joint_name_);
     if (joint_ == NULL)
         gzthrow("[gazebo_motor_model] Couldn't find specified joint \"" << joint_name_ << "\".");
-
 
     if (_sdf->HasElement("linkName"))
         link_name_ = _sdf->GetElement("linkName")->Get<std::string>();
@@ -139,26 +138,26 @@ void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf)
 #endif
     // Listen to the update event. This event is broadcast every
     // simulation iteration.
-    updateConnection_ = event::Events::ConnectWorldUpdateBegin(boost::bind(&GazeboMotorModel::OnUpdate, this, _1));
+    updateConnection_ = event::Events::ConnectWorldUpdateBegin(boost::bind(&GazeboServoModel::OnUpdate, this, _1));
 
     command_sub_ = node_handle_->Subscribe<cmd_msgs::msgs::MotorCommand>(
-        command_sub_topic_, &GazeboMotorModel::VelocityCallback, this);
+        command_sub_topic_, &GazeboServoModel::VelocityCallback, this);
     // std::cout << "[gazebo_motor_model]: Subscribe to gz topic: "<< motor_failure_sub_topic_ << std::endl;
     motor_failure_sub_
-        = node_handle_->Subscribe<msgs::Int>(motor_failure_sub_topic_, &GazeboMotorModel::MotorFailureCallback, this);
+        = node_handle_->Subscribe<msgs::Int>(motor_failure_sub_topic_, &GazeboServoModel::MotorFailureCallback, this);
 
     esc_sensor_pub_ = node_handle_->Advertise<sensor_msgs::msgs::EscSensor>(
         motor_speed_pub_topic_ + "/" + std::to_string(motor_number_));
 
-    // Create the first order filter.
-    rotor_velocity_filter_.reset(
-        new FirstOrderFilter<double>(time_constant_up_, time_constant_down_, ref_motor_rot_vel_));
+    // // Create the first order filter.
+    // rotor_velocity_filter_.reset(
+    //     new FirstOrderFilter<double>(time_constant_up_, time_constant_down_, ref_motor_rot_vel_));
 
     gzdbg << "Loading Motor number=" << motor_number_ << " Subscribed to " << command_sub_topic_ << std::endl;
 }
 
 // This gets called by the world update start event.
-void GazeboMotorModel::OnUpdate(const common::UpdateInfo& _info)
+void GazeboServoModel::OnUpdate(const common::UpdateInfo& _info)
 {
     sampling_time_ = _info.simTime.Double() - prev_sim_time_;
     prev_sim_time_ = _info.simTime.Double();
@@ -166,7 +165,7 @@ void GazeboMotorModel::OnUpdate(const common::UpdateInfo& _info)
     UpdateMotorFail();
     Publish();
 }
-void GazeboMotorModel::Reset()
+void GazeboServoModel::Reset()
 {
     // gzdbg << "Resetting motor " << motor_number_ << std::endl;
     joint_->Reset();
@@ -177,14 +176,16 @@ void GazeboMotorModel::Reset()
     last_ref_servo_rad_ = 0;
     cur_servo_rad_      = 0;
     last_servo_rad_     = 0;
+    // joint_->SetPosition(0, 90 * DEG2RAD);
 }
 // TODO:PWM到舵机角度的映射关系
-double GazeboMotorModel::CommandTransferFunction(double x)
+double GazeboServoModel::CommandTransferFunction(double x)
 {
+    // gzerr << "the cmd x is: " <<((x * servo_pwm_range_ / 2 + servo_init_pwm_) * servo_cr_ + servo_wb_) << "\n";
     return (x * servo_pwm_range_ / 2 + servo_init_pwm_) * servo_cr_ + servo_wb_;
 }
 
-void GazeboMotorModel::VelocityCallback(MotorCommandPtr& _cmd)
+void GazeboServoModel::VelocityCallback(MotorCommandPtr& _cmd)
 {
     // gzdbg << "Motor " << motor_number_ << " Value " << _cmd->motor(motor_number_) << " Current velocity " <<
     // joint_->GetVelocity(0) << std::endl;
@@ -195,26 +196,37 @@ void GazeboMotorModel::VelocityCallback(MotorCommandPtr& _cmd)
     } else {
         last_ref_servo_rad_ = ref_servo_rad_;
         ref_servo_rad_      = CommandTransferFunction(static_cast<double>(_cmd->motor(motor_number_)));
+        ref_servo_rad_      = (abs(ref_servo_rad_) > SERVO_ACCURACY) ? ref_servo_rad_ : 0;
     }
 }
 
-void GazeboMotorModel::MotorFailureCallback(const boost::shared_ptr<const msgs::Int>& fail_msg)
+void GazeboServoModel::MotorFailureCallback(const boost::shared_ptr<const msgs::Int>& fail_msg)
 {
     motor_Failure_Number_ = fail_msg->data();
 }
 
-void GazeboMotorModel::UpdateForcesAndMoments()
+void GazeboServoModel::UpdateForcesAndMoments()
 {
-    double tmp_rad = cur_servo_rad_ = joint_->Position();
 
-    cur_servo_rad_ = servo_dynamic_angle_[0] * cur_servo_rad_ + servo_dynamic_angel[1] * last_servo_rad_
-                     + servo_dynamic_angel[2] * ref_servo_rad_ + servo_dynamic_angel[3] * last_ref_servo_rad_;
-    last_servo_rad_ = cur_servo_rad;
+    // joint_->SetPosition(0, 90 * DEG2RAD);
 
-    joint_->SetPosition(cur_servo_rad_);
+    cur_servo_rad_ = joint_->Position() / DEG2RAD;
+    cur_servo_rad_ = (abs(cur_servo_rad_) > SERVO_ACCURACY) ? cur_servo_rad_ : 0;
+
+    double tmp_rad = cur_servo_rad_;
+
+    cur_servo_rad_ = servo_dynamic_angle_[0] * cur_servo_rad_ + servo_dynamic_angle_[1] * last_servo_rad_
+                     + servo_dynamic_angle_[2] * ref_servo_rad_ + servo_dynamic_angle_[3] * last_ref_servo_rad_;
+    last_servo_rad_ = tmp_rad;
+
+    joint_->SetPosition(0, cur_servo_rad_ * DEG2RAD);
+    // joint_->SetUpperLimit(0, cur_servo_rad_ * DEG2RAD);
+    // joint_->SetLowerLimit(0, cur_servo_rad_ * DEG2RAD);
+    double position = joint_->Position() / DEG2RAD;
+    // gzerr << "the position is\t" << position << "," << cur_servo_rad_ << "," << ref_servo_rad_ << "\n";
 }
 
-void GazeboMotorModel::UpdateMotorFail()
+void GazeboServoModel::UpdateMotorFail()
 {
     if (motor_number_ == motor_Failure_Number_ - 1) {
         // motor_constant_ = 0.0;
@@ -234,5 +246,5 @@ void GazeboMotorModel::UpdateMotorFail()
     }
 }
 
-GZ_REGISTER_MODEL_PLUGIN(GazeboMotorModel);
+GZ_REGISTER_MODEL_PLUGIN(GazeboServoModel);
 }
