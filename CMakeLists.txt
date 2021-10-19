@@ -91,10 +91,12 @@ add_library(sensor_msgs SHARED ${SEN_PROTO_SRCS})
 link_libraries(control_msgs sensor_msgs)
 
 add_library(gazebo_motor_model SHARED src/gazebo_motor_model.cpp)
+add_library(gazebo_servo_model SHARED src/gazebo_servo_model.cpp)
 add_library(gazebo_imu_plugin SHARED src/gazebo_imu_plugin.cpp)
 
 set(plugins
     gazebo_motor_model
+    gazebo_servo_model
     gazebo_imu_plugin
     )
 foreach(plugin ${plugins})
