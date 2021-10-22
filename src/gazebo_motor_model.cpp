@@ -307,12 +307,12 @@ void GazeboMotorModel::UpdateForcesAndMoments()
     ignition::math::Vector3d body_velocity = ignitionFromGazeboMath(link1_->GetWorldLinearVel());
 #endif
 
-    double vel = body_velocity.Length();
+    // double vel = body_velocity.Length();
 
     // double scalar = 1 - vel / 25;
     // force         = force * ignition::math::clamp(scalar, 0.0, 1.0);
 
-    gzdbg << "the z velocity is:  " << vel << "    force :  " << force << "\n";
+    // gzdbg << "the z velocity is:  " << vel << "    force :  " << force << "\n";
 
     // Apply a force to the link.
     link1_->AddRelativeForce(ignition::math::Vector3d(force / 2, 0, 0));
