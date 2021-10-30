@@ -118,7 +118,7 @@ private:
     std::string joint2_name_;
     std::string link1_name_;
     std::string link2_name_;
-    std::string base_link_name_;
+    std::string baselink_name_;
     std::string motor_speed_pub_topic_;
     std::string namespace_;
     std::string rotor_velocity_units_;
@@ -147,7 +147,7 @@ private:
     double current_torque_ = 0;
     double motor_dynamic_flap_hz_[2]; // Max 3 terms
     double flap_hz_to_thrust_[3];
-    double air_drag_coefficient_[2];
+    double air_drag_coefficient_[3];
     double cop_poistion_[3];
 
     double turned_rad;
@@ -165,6 +165,7 @@ private:
     physics::JointPtr joint2_;
     physics::LinkPtr  link1_;
     physics::LinkPtr  link2_;
+    physics::LinkPtr  baselink_;
 
     bool use_pid_;
 

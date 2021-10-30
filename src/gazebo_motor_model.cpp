@@ -24,6 +24,8 @@
 
 namespace gazebo {
 
+static int counter;
+
 GazeboMotorModel::~GazeboMotorModel()
 {
     updateConnection_->~Connection();
@@ -104,7 +106,15 @@ void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf)
     link2_ = model_->GetLink(link2_name_);
     if (link2_ == NULL)
         gzthrow("[gazebo_motor_model] Couldn't find specified link \"" << link2_name_ << "\".");
- 
+
+    if (_sdf->HasElement("baseLinkName"))
+        baselink_name_ = _sdf->GetElement("baseLinkName")->Get<std::string>();
+    else
+        gzerr << "[gazebo_motor_model] Please specify a baseLinkName of the rotor.\n";
+    baselink_ = model_->GetLink(baselink_name_);
+    if (baselink_ == NULL)
+        gzthrow("[gazebo_motor_model] Couldn't find specified link \"" << baselink_name_ << "\".");
+
     if (_sdf->HasElement("motorNumber"))
         motor_number_ = _sdf->GetElement("motorNumber")->Get<int>();
     else
@@ -169,19 +179,23 @@ void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf)
 
     if (_sdf->HasElement("dragCoefficient")) {
         sdf::ElementPtr tf = _sdf->GetElement("dragCoefficient");
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 3; i++) {
             air_drag_coefficient_[i] = 0;
         }
-        if (tf->HasElement("cdxy")) {
-            air_drag_coefficient_[0] = tf->Get<double>("cdxy");
+        if (tf->HasElement("cdx")) {
+            air_drag_coefficient_[0] = tf->Get<double>("cdx");
+        }
+        if (tf->HasElement("cdy")) {
+            air_drag_coefficient_[1] = tf->Get<double>("cdy");
         }
         if (tf->HasElement("cdz")) {
-            air_drag_coefficient_[1] = tf->Get<double>("cdz");
+            air_drag_coefficient_[2] = tf->Get<double>("cdz");
         }
 
     } else {
-        air_drag_coefficient_[0] = 0.889679715;
-        air_drag_coefficient_[1] = 0.110320285;
+        air_drag_coefficient_[0] = 0.0042;
+        air_drag_coefficient_[1] = 0.0042;
+        air_drag_coefficient_[2] = 0.0009;
     }
 
     if (_sdf->HasElement("turningDirection")) {
@@ -267,6 +281,8 @@ void GazeboMotorModel::Reset()
     prev_sim_time_ = 0;
     sampling_time_ = 0.001;
     turned_rad     = 0;
+    counter        = 0;
+
     // rotor_velocity_filter_.reset(new FirstOrderFilter<double>(time_constant_up_, time_constant_down_, ref_flap_hz));
 }
 double GazeboMotorModel::CommandTransferFunction(double x) { return 4.2 * x * motor_cr_ + motor_wb_; }
@@ -302,7 +318,16 @@ void GazeboMotorModel::UpdateForcesAndMoments()
     double real_motor_velocity = motor_rot_vel_ = cur_flap_hz * flap_max_rad_ * 2;
 
 #if GAZEBO_MAJOR_VERSION >= 9
-    ignition::math::Vector3d body_velocity = link1_->RelativeLinearVel();
+    ignition::math::Vector3d body_velocity_1 = link1_->RelativeLinearVel();
+    ignition::math::Vector3d body_velocity_2 = link2_->RelativeLinearVel();
+    // ignition::math::Vector3d body_velocity   = body_velocity_2;
+    ignition::math::Vector3d body_velocity = (body_velocity_1 + body_velocity_2) / 2;
+
+    // ignition::math::Vector3d err_velocity = body_velocity_1 - body_velocity_2;
+    // gzdbg << "the worldlinear vel is : " << err_velocity[0] << ", " << err_velocity[1] << ", " << err_velocity[2]
+    //       << "\n";
+    // gzdbg << "the linear vel is : " << body_velocity_1[0] << ", " << body_velocity_1[1] << ", "
+    //       << body_velocity_1[2] << "\n";
 #else
     ignition::math::Vector3d body_velocity = ignitionFromGazeboMath(link1_->GetWorldLinearVel());
 #endif
@@ -315,31 +340,39 @@ void GazeboMotorModel::UpdateForcesAndMoments()
     // gzdbg << "the z velocity is:  " << vel << "    force :  " << force << "\n";
 
     // Apply a force to the link.
-    link1_->AddRelativeForce(ignition::math::Vector3d(force / 2, 0, 0));
-    link2_->AddRelativeForce(ignition::math::Vector3d(force / 2, 0, 0));
 
-    // link1_->AddLinkForce(ignition::math::Vector3d(0, 0, force), ignition::math::Vector3d(0.06, 0, 0));
+    // ignition::math::Vector3d joint_axis          = joint1_->GlobalAxis(0);
+    // ignition::math::Vector3d body_velocity1_flap = body_velocity_1 - (body_velocity_1 * joint_axis) * joint_axis;
+
+    ignition::math::Vector3d air_drag1(0, 0, 0);
+    air_drag1[0] = -std::abs(cur_flap_hz) * air_drag_coefficient_[0] * body_velocity[0];
+    air_drag1[1] = -std::abs(cur_flap_hz) * air_drag_coefficient_[1] * body_velocity[1];
+    air_drag1[2] = -std::abs(cur_flap_hz) * air_drag_coefficient_[2] * body_velocity[2];
+
+    // joint_axis                                   = joint2_->GlobalAxis(0);
+    // ignition::math::Vector3d body_velocity2_flap = body_velocity_2 - (body_velocity_2 * joint_axis) * joint_axis;
+
+    // ignition::math::Vector3d air_drag2(0, 0, 0);
+    // air_drag2[0] = -std::abs(cur_flap_hz) * air_drag_coefficient_[0] * body_velocity2[0];
+    // air_drag2[1] = -std::abs(cur_flap_hz) * air_drag_coefficient_[1] * body_velocity2[1];
+    // air_drag2[2] = -std::abs(cur_flap_hz) * air_drag_coefficient_[2] * body_velocity2[2];
+
+    // if (counter++ <= 100) {
+    link1_->AddLinkForce(ignition::math::Vector3d(0, 0, force / 2));
+    link2_->AddLinkForce(ignition::math::Vector3d(0, 0, force / 2));
+    // gzdbg << "the motor " << motor_number_ << " force is " << force << "\n";
+    // } else {
+    //     gzdbg << "the air_drag is : " << air_drag1[0] << ", " << air_drag1[1] << ", " << air_drag1[2] << "\n";
+    // }
 
     // TODO:添加空气阻力
 
-    // ignition::math::Vector3d joint_axis = joint1_->GlobalAxis(0);
-
-    // ignition::math::Vector3d body_velocity_flap = body_velocity - (body_velocity * joint_axis) * joint_axis;
-
-    ignition::math::Vector3d air_drag = -std::abs(cur_flap_hz) * 1 * air_drag_coefficient_[0] * body_velocity;
-    air_drag[2]                       = -std::abs(cur_flap_hz) * 1 * air_drag_coefficient_[1] * body_velocity[2];
-
-    // Apply air_drag to link.
-    link1_->AddLinkForce(air_drag / 2);
-    link2_->AddLinkForce(air_drag / 2);
-
-    // gzdbg << "rotor " << link1_->GetName() << " force : " << air_drag[0] << ", " << force<< "\n";
-
-    // gzdbg << "rotor " << joint1_->GetName() << " : " << real_motor_velocity << "\n";
+    link1_->AddLinkForce(air_drag1);
+    link2_->AddLinkForce(air_drag1);
 
     turned_rad += turning_direction_ * real_motor_velocity * 0.002;
-    joint1_->SetPosition(0, turned_rad);
-    joint2_->SetPosition(0, -turned_rad);
+    // joint1_->SetPosition(0, turned_rad);
+    // joint2_->SetPosition(0, -turned_rad);
 }
 
 void GazeboMotorModel::UpdateMotorFail()
