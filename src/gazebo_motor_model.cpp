@@ -107,6 +107,14 @@ void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf)
     if (link2_ == NULL)
         gzthrow("[gazebo_motor_model] Couldn't find specified link \"" << link2_name_ << "\".");
 
+    if (_sdf->HasElement("bodyLinkName"))
+        bodylink_name_ = _sdf->GetElement("bodyLinkName")->Get<std::string>();
+    else
+        gzerr << "[gazebo_motor_model] Please specify a bodyLinkName of the rotor.\n";
+    bodylink_ = model_->GetLink(bodylink_name_);
+    if (bodylink_ == NULL)
+        gzthrow("[gazebo_motor_model] Couldn't find specified link \"" << bodylink_name_ << "\".");
+
     if (_sdf->HasElement("baseLinkName"))
         baselink_name_ = _sdf->GetElement("baseLinkName")->Get<std::string>();
     else
@@ -157,26 +165,6 @@ void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf)
         flap_hz_to_thrust_[2] = 1;
     }
 
-    if (_sdf->HasElement("copPosition")) {
-        sdf::ElementPtr tf = _sdf->GetElement("copPosition");
-        for (int i = 0; i < 3; i++) {
-            cop_poistion_[i] = 0;
-        }
-        if (tf->HasElement("x")) {
-            cop_poistion_[0] = tf->Get<double>("x");
-        }
-        if (tf->HasElement("y")) {
-            cop_poistion_[1] = tf->Get<double>("y");
-        }
-        if (tf->HasElement("z")) {
-            cop_poistion_[2] = tf->Get<double>("z");
-        }
-    } else {
-        cop_poistion_[0] = 0.0;
-        cop_poistion_[1] = 0.0;
-        cop_poistion_[2] = 0.06;
-    }
-
     if (_sdf->HasElement("dragCoefficient")) {
         sdf::ElementPtr tf = _sdf->GetElement("dragCoefficient");
         for (int i = 0; i < 3; i++) {
@@ -196,6 +184,25 @@ void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf)
         air_drag_coefficient_[0] = 0.0042;
         air_drag_coefficient_[1] = 0.0042;
         air_drag_coefficient_[2] = 0.0009;
+    }
+
+    if (_sdf->HasElement("coTOfFlap")) {
+        sdf::ElementPtr tf = _sdf->GetElement("coTOfFlap");
+
+        coTOfFlap = ignition::math::Vector3d(0, 0, 0);
+
+        if (tf->HasElement("x")) {
+            coTOfFlap[0] = tf->Get<double>("x");
+        }
+        if (tf->HasElement("y")) {
+            coTOfFlap[1] = tf->Get<double>("y");
+        }
+        if (tf->HasElement("z")) {
+            coTOfFlap[2] = tf->Get<double>("z");
+        }
+
+    } else {
+        gzerr << "[gazebo_motor_model] can't find coTOfFlap.\n";
     }
 
     if (_sdf->HasElement("turningDirection")) {
@@ -279,7 +286,7 @@ void GazeboMotorModel::Reset()
     ref_flap_hz    = 0;
     cur_flap_hz    = 0;
     prev_sim_time_ = 0;
-    sampling_time_ = 0.001;
+    sampling_time_ = 0.002;
     turned_rad     = 0;
     counter        = 0;
 
@@ -318,61 +325,42 @@ void GazeboMotorModel::UpdateForcesAndMoments()
     double real_motor_velocity = motor_rot_vel_ = cur_flap_hz * flap_max_rad_ * 2;
 
 #if GAZEBO_MAJOR_VERSION >= 9
-    ignition::math::Vector3d body_velocity_1 = link1_->RelativeLinearVel();
-    ignition::math::Vector3d body_velocity_2 = link2_->RelativeLinearVel();
-    // ignition::math::Vector3d body_velocity   = body_velocity_2;
-    ignition::math::Vector3d body_velocity = (body_velocity_1 + body_velocity_2) / 2;
 
-    // ignition::math::Vector3d err_velocity = body_velocity_1 - body_velocity_2;
-    // gzdbg << "the worldlinear vel is : " << err_velocity[0] << ", " << err_velocity[1] << ", " << err_velocity[2]
+    ignition::math::Vector3d base_angle_vel = baselink_->RelativeAngularVel();
+    // ignition::math::Vector3d body_angle_vel = bodylink_->RelativeAngularVel();
+    ignition::math::Vector3d base_linear_vel = baselink_->RelativeLinearVel();
+
+    // static ignition::math::Vector3d base_frame_vecter;
+    // base_frame_vecter = ignition::math::Vector3d(0, 0.004408, 0.062084);
+
+    ignition::math::Vector3d coT_linear_vel = base_angle_vel.Cross(coTOfFlap);
+    ignition::math::Vector3d body_velocity = base_linear_vel + coT_linear_vel;
+    // ignition::math::Vector3d tmp_vel2 = body_angle_vel.Cross(base_frame_vecter);
+
+    // gzdbg << "the base angle vel err is : " << base_liner_vel[0] << ", " << base_liner_vel[1] << ", " <<
+    // base_liner_vel[2]
     //       << "\n";
-    // gzdbg << "the linear vel is : " << body_velocity_1[0] << ", " << body_velocity_1[1] << ", "
-    //       << body_velocity_1[2] << "\n";
+    // gzdbg << "the base world vel err is : " << tmp_vel2[0] << ", " << tmp_vel2[1] << ", " << tmp_vel2[2]
+    //       << "\n";
+
 #else
     ignition::math::Vector3d body_velocity = ignitionFromGazeboMath(link1_->GetWorldLinearVel());
 #endif
 
-    // double vel = body_velocity.Length();
+    ignition::math::Vector3d air_drag(0, 0, 0);
+    air_drag[0] = -std::abs(cur_flap_hz) * air_drag_coefficient_[0] * body_velocity[0];
+    air_drag[1] = -std::abs(cur_flap_hz) * air_drag_coefficient_[1] * body_velocity[1];
+    air_drag[2] = -std::abs(cur_flap_hz) * air_drag_coefficient_[2] * body_velocity[2];
 
-    // double scalar = 1 - vel / 25;
-    // force         = force * ignition::math::clamp(scalar, 0.0, 1.0);
-
-    // gzdbg << "the z velocity is:  " << vel << "    force :  " << force << "\n";
-
-    // Apply a force to the link.
-
-    // ignition::math::Vector3d joint_axis          = joint1_->GlobalAxis(0);
-    // ignition::math::Vector3d body_velocity1_flap = body_velocity_1 - (body_velocity_1 * joint_axis) * joint_axis;
-
-    ignition::math::Vector3d air_drag1(0, 0, 0);
-    air_drag1[0] = -std::abs(cur_flap_hz) * air_drag_coefficient_[0] * body_velocity[0];
-    air_drag1[1] = -std::abs(cur_flap_hz) * air_drag_coefficient_[1] * body_velocity[1];
-    air_drag1[2] = -std::abs(cur_flap_hz) * air_drag_coefficient_[2] * body_velocity[2];
-
-    // joint_axis                                   = joint2_->GlobalAxis(0);
-    // ignition::math::Vector3d body_velocity2_flap = body_velocity_2 - (body_velocity_2 * joint_axis) * joint_axis;
-
-    // ignition::math::Vector3d air_drag2(0, 0, 0);
-    // air_drag2[0] = -std::abs(cur_flap_hz) * air_drag_coefficient_[0] * body_velocity2[0];
-    // air_drag2[1] = -std::abs(cur_flap_hz) * air_drag_coefficient_[1] * body_velocity2[1];
-    // air_drag2[2] = -std::abs(cur_flap_hz) * air_drag_coefficient_[2] * body_velocity2[2];
-
-    // if (counter++ <= 100) {
-    link1_->AddLinkForce(ignition::math::Vector3d(0, 0, force / 2));
-    link2_->AddLinkForce(ignition::math::Vector3d(0, 0, force / 2));
-    // gzdbg << "the motor " << motor_number_ << " force is " << force << "\n";
-    // } else {
-    //     gzdbg << "the air_drag is : " << air_drag1[0] << ", " << air_drag1[1] << ", " << air_drag1[2] << "\n";
-    // }
+    baselink_->AddLinkForce(ignition::math::Vector3d(0, 0, force), coTOfFlap);
 
     // TODO:添加空气阻力
 
-    link1_->AddLinkForce(air_drag1);
-    link2_->AddLinkForce(air_drag1);
+    baselink_->AddLinkForce(air_drag, coTOfFlap);
 
     turned_rad += turning_direction_ * real_motor_velocity * 0.002;
-    // joint1_->SetPosition(0, turned_rad);
-    // joint2_->SetPosition(0, -turned_rad);
+    joint1_->SetPosition(0, turned_rad);
+    joint2_->SetPosition(0, -turned_rad);
 }
 
 void GazeboMotorModel::UpdateMotorFail()

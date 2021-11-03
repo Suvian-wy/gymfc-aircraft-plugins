@@ -119,6 +119,7 @@ private:
     std::string link1_name_;
     std::string link2_name_;
     std::string baselink_name_;
+    std::string bodylink_name_;
     std::string motor_speed_pub_topic_;
     std::string namespace_;
     std::string rotor_velocity_units_;
@@ -148,7 +149,9 @@ private:
     double motor_dynamic_flap_hz_[2]; // Max 3 terms
     double flap_hz_to_thrust_[3];
     double air_drag_coefficient_[3];
-    double cop_poistion_[3];
+    // double coTOfFlap[3];
+    ignition::math::Vector3d coTOfFlap;
+    ignition::math::Vector3d coTOfDrag;
 
     double turned_rad;
 
@@ -166,6 +169,7 @@ private:
     physics::LinkPtr  link1_;
     physics::LinkPtr  link2_;
     physics::LinkPtr  baselink_;
+    physics::LinkPtr  bodylink_;
 
     bool use_pid_;
 
