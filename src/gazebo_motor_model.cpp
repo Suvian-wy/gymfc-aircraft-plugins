@@ -315,8 +315,9 @@ void GazeboMotorModel::UpdateForcesAndMoments()
 {
     cur_flap_hz = 1 / (1 + (1 / motor_T_) * sampling_time_) * cur_flap_hz
                   + (1 / motor_T_) * sampling_time_ / (1 + (1 / motor_T_) * sampling_time_) * ref_flap_hz;
-    current_force_ = (flap_hz_to_thrust_[0] * cur_flap_hz + flap_hz_to_thrust_[1] * cur_flap_hz * cur_flap_hz) / 9.8;
+    current_force_ = (flap_hz_to_thrust_[0] * cur_flap_hz + flap_hz_to_thrust_[1] * cur_flap_hz * cur_flap_hz) / 1000 * 9.8;
     double force   = current_force_;
+    gzdbg << "the motor " << motor_number_<< "force is "<< force << "\n";
     motor_rot_vel_ = joint1_->GetVelocity(0);
     // turned_rad += motor_rot_vel_ * sampling_time_;
     if (turned_rad >= flap_max_rad_ || turned_rad <= 0)
